@@ -1,0 +1,488 @@
+"use client";
+
+import { T, cardStyle } from "@/lib/tokens";
+import { calcSettlements } from "@/lib/settlements";
+import type { Group, Member, Charge } from "@/lib/types";
+import Avatar from "@/components/Avatar";
+import NotificationBanner from "@/components/NotificationBanner";
+
+interface DashboardTabProps {
+  group: Group;
+  currentUser: Member;
+  allCharges: Charge[];
+  setGroup: (updater: (prev: Group) => Group) => void;
+  setTab: (tab: string) => void;
+}
+
+export default function DashboardTab({
+  group,
+  currentUser,
+  allCharges,
+  setGroup,
+  setTab,
+}: DashboardTabProps) {
+  const settlements = calcSettlements(
+    group.members,
+    allCharges,
+    group.payments,
+    group.smartSettle
+  );
+  const totalMonthly = allCharges
+    .filter((c) => c.recurring)
+    .reduce((s, c) => s + c.amount, 0);
+  const myNotifications = (group.payments || []).filter(
+    (p) => p.toId === currentUser.id && p.status === "pending"
+  );
+  const handlePaymentAction = (
+    paymentId: string,
+    status: "confirmed" | "rejected"
+  ) => {
+    setGroup((prev) => ({
+      ...prev,
+      payments: prev.payments.map((p) =>
+        p.id === paymentId ? { ...p, status } : p
+      ),
+    }));
+  };
+
+  const iOwe = settlements.filter((s) => s.fromId === currentUser.id);
+  const owedToMe = settlements.filter((s) => s.toId === currentUser.id);
+  const totalIOwe = iOwe.reduce((s, x) => s + x.amount, 0);
+  const totalOwedToMe = owedToMe.reduce((s, x) => s + x.amount, 0);
+  const netBalance = totalOwedToMe - totalIOwe;
+
+  return (
+    <div>
+      <NotificationBanner
+        notifications={myNotifications}
+        onAction={handlePaymentAction}
+        group={group}
+      />
+
+      {/* Hero balance */}
+      <div
+        style={{
+          ...cardStyle,
+          padding: "28px 24px",
+          marginBottom: 16,
+          textAlign: "center",
+          background:
+            netBalance >= 0
+              ? "linear-gradient(135deg, rgba(52,199,89,0.08), rgba(0,122,255,0.06))"
+              : "linear-gradient(135deg, rgba(255,59,48,0.08), rgba(255,149,0,0.06))",
+          border: `1px solid ${
+            netBalance >= 0
+              ? "rgba(52,199,89,0.15)"
+              : "rgba(255,59,48,0.15)"
+          }`,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: T.secondary,
+            marginBottom: 4,
+          }}
+        >
+          Your Balance
+        </div>
+        <div
+          style={{
+            fontFamily: T.mono,
+            fontSize: 40,
+            fontWeight: 700,
+            letterSpacing: "-0.03em",
+            color:
+              netBalance > 0.01
+                ? T.green
+                : netBalance < -0.01
+                  ? T.red
+                  : T.secondary,
+          }}
+        >
+          {netBalance > 0 ? "+" : netBalance < 0 ? "−" : ""}$
+          {Math.abs(netBalance).toFixed(2)}
+        </div>
+        <div style={{ fontSize: 14, color: T.secondary, marginTop: 4 }}>
+          {netBalance > 0.01
+            ? "You're owed money"
+            : netBalance < -0.01
+              ? "You owe money"
+              : "All settled up"}
+        </div>
+        {netBalance < -0.01 && (
+          <button
+            onClick={() => setTab("settle")}
+            style={{
+              marginTop: 14,
+              background: T.blue,
+              color: "#fff",
+              border: "none",
+              borderRadius: 20,
+              padding: "8px 20px",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: T.font,
+              boxShadow: "0 4px 12px rgba(0,122,255,0.3)",
+            }}
+          >
+            Settle Up
+          </button>
+        )}
+      </div>
+
+      {/* Summary row */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 10,
+          marginBottom: 24,
+        }}
+      >
+        <div style={cardStyle}>
+          <div
+            style={{ fontSize: 13, fontWeight: 500, color: T.secondary }}
+          >
+            You Owe
+          </div>
+          <div
+            style={{
+              fontFamily: T.mono,
+              fontSize: 22,
+              fontWeight: 700,
+              color: totalIOwe > 0 ? T.red : T.tertiary,
+              marginTop: 4,
+            }}
+          >
+            ${totalIOwe.toFixed(2)}
+          </div>
+        </div>
+        <div style={cardStyle}>
+          <div
+            style={{ fontSize: 13, fontWeight: 500, color: T.secondary }}
+          >
+            Owed to You
+          </div>
+          <div
+            style={{
+              fontFamily: T.mono,
+              fontSize: 22,
+              fontWeight: 700,
+              color: totalOwedToMe > 0 ? T.green : T.tertiary,
+              marginTop: 4,
+            }}
+          >
+            ${totalOwedToMe.toFixed(2)}
+          </div>
+        </div>
+      </div>
+
+      {/* People you owe */}
+      {iOwe.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h3
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: T.secondary,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: 10,
+            }}
+          >
+            You Owe
+          </h3>
+          <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+            {iOwe.map((s, i) => {
+              const toM = group.members.find((m) => m.id === s.toId);
+              const toIdx = toM ? group.members.indexOf(toM) : 0;
+              const existing = (group.payments || []).find(
+                (p) =>
+                  p.fromId === s.fromId &&
+                  p.toId === s.toId &&
+                  (p.status === "pending" || p.status === "confirmed")
+              );
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "14px 18px",
+                    borderBottom:
+                      i < iOwe.length - 1
+                        ? `1px solid ${T.border}`
+                        : "none",
+                  }}
+                >
+                  <Avatar name={s.toName} index={toIdx} size={40} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>
+                      {s.toName}
+                    </div>
+                    {toM?.venmo && (
+                      <div style={{ fontSize: 13, color: T.tertiary }}>
+                        {toM.venmo}
+                      </div>
+                    )}
+                    {existing?.status === "pending" && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: T.orange,
+                          fontWeight: 500,
+                          marginTop: 2,
+                        }}
+                      >
+                        Waiting for confirmation
+                      </div>
+                    )}
+                    {existing?.status === "confirmed" && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: T.green,
+                          fontWeight: 500,
+                          marginTop: 2,
+                        }}
+                      >
+                        Confirmed ✓
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: T.mono,
+                      fontWeight: 600,
+                      fontSize: 17,
+                      color: T.red,
+                    }}
+                  >
+                    ${s.amount.toFixed(2)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Owed to you */}
+      {owedToMe.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h3
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: T.secondary,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: 10,
+            }}
+          >
+            Owed to You
+          </h3>
+          <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+            {owedToMe.map((s, i) => {
+              const fromM = group.members.find((m) => m.id === s.fromId);
+              const fromIdx = fromM ? group.members.indexOf(fromM) : 0;
+              const existing = (group.payments || []).find(
+                (p) =>
+                  p.fromId === s.fromId &&
+                  p.toId === s.toId &&
+                  (p.status === "pending" || p.status === "confirmed")
+              );
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "14px 18px",
+                    borderBottom:
+                      i < owedToMe.length - 1
+                        ? `1px solid ${T.border}`
+                        : "none",
+                  }}
+                >
+                  <Avatar name={s.fromName} index={fromIdx} size={40} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>
+                      {s.fromName}
+                    </div>
+                    {existing?.status === "pending" && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: T.orange,
+                          fontWeight: 500,
+                          marginTop: 2,
+                        }}
+                      >
+                        Says they paid
+                      </div>
+                    )}
+                    {existing?.status === "confirmed" && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: T.green,
+                          fontWeight: 500,
+                          marginTop: 2,
+                        }}
+                      >
+                        Confirmed ✓
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: T.mono,
+                      fontWeight: 600,
+                      fontSize: 17,
+                      color: T.green,
+                    }}
+                  >
+                    ${s.amount.toFixed(2)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {iOwe.length === 0 &&
+        owedToMe.length === 0 &&
+        myNotifications.length === 0 && (
+          <div
+            style={{
+              textAlign: "center",
+              padding: 48,
+              color: T.tertiary,
+              fontSize: 15,
+            }}
+          >
+            All settled up ✨
+          </div>
+        )}
+
+      {totalMonthly > 0 && (
+        <div style={{ ...cardStyle, textAlign: "center", marginBottom: 16 }}>
+          <div
+            style={{ fontSize: 13, fontWeight: 500, color: T.secondary }}
+          >
+            Monthly Recurring
+          </div>
+          <div
+            style={{
+              fontFamily: T.mono,
+              fontSize: 22,
+              fontWeight: 700,
+              marginTop: 4,
+            }}
+          >
+            ${totalMonthly.toFixed(2)}
+          </div>
+        </div>
+      )}
+
+      {allCharges.length > 0 && (
+        <div>
+          <h3
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: T.secondary,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: 10,
+            }}
+          >
+            Recent
+          </h3>
+          <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+            {allCharges
+              .slice(-5)
+              .reverse()
+              .map((c, i) => (
+                <div
+                  key={c.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "12px 18px",
+                    borderBottom:
+                      i < Math.min(allCharges.length, 5) - 1
+                        ? `1px solid ${T.border}`
+                        : "none",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 10,
+                      background:
+                        c.type === "rent"
+                          ? "rgba(255,149,0,0.1)"
+                          : c.type === "utility"
+                            ? "rgba(0,122,255,0.1)"
+                            : "rgba(88,86,214,0.1)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 17,
+                    }}
+                  >
+                    {c.type === "rent"
+                      ? "🏠"
+                      : c.type === "utility"
+                        ? "⚡"
+                        : "🛒"}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 500, fontSize: 14 }}>
+                      {c.description}
+                      {c.recurring && (
+                        <span
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 11,
+                            color: T.blue,
+                            fontWeight: 600,
+                          }}
+                        >
+                          Monthly
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: T.tertiary }}>
+                      {c.type === "expense"
+                        ? `by ${c.submittedByName}`
+                        : "Treasurer"}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: T.mono,
+                      fontWeight: 600,
+                      fontSize: 14,
+                    }}
+                  >
+                    ${c.amount.toFixed(2)}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
